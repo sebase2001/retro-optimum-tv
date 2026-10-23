@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 const TMDB_API_KEY = '3fd13673b37363d5107711b6d2b311ad';
+const CORS_PROXY = 'https://corsproxy.io/?url=';
 
 const RETRO_COMMERCIAL_TORRENTS = [
   '8093132bf6e1e8b792ff4a682a201b1a4732d847',
@@ -21,7 +22,7 @@ const OPTIMUM_CHANNELS = [
 
 export default function App() {
   const [selectedRow, setSelectedRow] = useState(0);
-  const [currentScreen, setCurrentScreen] = useState('guide'); // 'guide', 'player', 'settings'
+  const [currentScreen, setCurrentScreen] = useState('guide'); 
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
   // Dual-Player Buffering State
@@ -31,6 +32,7 @@ export default function App() {
   
   const [currentEpisodeInfo, setCurrentEpisodeInfo] = useState(null);
   const [isCommercialActive, setIsCommercialActive] = useState(false);
+  const [debridStatusMsg, setDebridStatusMsg] = useState('');
 
   // Debrid State
   const [debridProvider, setDebridProvider] = useState(localStorage.getItem('debrid_provider') || 'realdebrid');
@@ -40,21 +42,19 @@ export default function App() {
   const videoRefB = useRef(null);
   const rowRefs = useRef([]);
 
-  // Detect screen size changes for mobile vs TV layout switching
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Auto-scroll selected row into view
   useEffect(() => {
     if (rowRefs.current[selectedRow]) {
       rowRefs.current[selectedRow].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [selectedRow]);
 
-  // Android TV Remote Control Handler
+  // Keybindings
   useEffect(() => {
     const handleRemoteControl = (e) => {
       const keyCode = e.keyCode || e.which;
@@ -86,6 +86,25 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleRemoteControl);
   }, [currentScreen, selectedRow]);
 
+  // Test Debrid Key Validity
+  const verifyDebridKey = async (key) => {
+    if (!key) return;
+    try {
+      const targetUrl = encodeURIComponent('https://api.real-debrid.com/rest/1.0/user');
+      const res = await fetch(`${CORS_PROXY}${targetUrl}`, {
+        headers: { Authorization: `Bearer ${key}` }
+      });
+      const data = await res.json();
+      if (data.username) {
+        setDebridStatusMsg(`Connected as: ${data.username} (${data.type})`);
+      } else {
+        setDebridStatusMsg('Invalid API Key or expired Real-Debrid account!');
+      }
+    } catch (e) {
+      setDebridStatusMsg('Network error validating Debrid key.');
+    }
+  };
+
   const fetchRandomEpisode = async (tmdbId) => {
     try {
       const showRes = await fetch(`https://api.themoviedb.org/3/tv/${tmdbId}?api_key=${TMDB_API_KEY}`);
@@ -113,38 +132,53 @@ export default function App() {
     if (!debridKey) return null;
     try {
       if (debridProvider === 'realdebrid') {
-        const formData = new FormData();
-        formData.append('magnet', hashOrMagnet.startsWith('magnet:') ? hashOrMagnet : `magnet:?xt=urn:btih:${hashOrMagnet}`);
+        const cleanMagnet = hashOrMagnet.startsWith('magnet:') 
+          ? hashOrMagnet 
+          : `magnet:?xt=urn:btih:${hashOrMagnet}`;
         
-        const addRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/addMagnet`, {
+        const addUrl = encodeURIComponent(`https://api.real-debrid.com/rest/1.0/torrents/addMagnet`);
+        const formData = new URLSearchParams();
+        formData.append('magnet', cleanMagnet);
+
+        const addRes = await fetch(`${CORS_PROXY}${addUrl}`, {
           method: 'POST',
-          headers: { Authorization: `Bearer ${debridKey}` },
-          body: formData,
+          headers: { 
+            Authorization: `Bearer ${debridKey}`,
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: formData.toString(),
         });
         const addData = await addRes.json();
 
         if (addData.id) {
-          const infoRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`, {
+          const infoUrl = encodeURIComponent(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`);
+          const infoRes = await fetch(`${CORS_PROXY}${infoUrl}`, {
             headers: { Authorization: `Bearer ${debridKey}` },
           });
           const infoData = await infoRes.json();
 
           if (infoData.links && infoData.links.length > 0) {
             const randomLink = infoData.links[Math.floor(Math.random() * infoData.links.length)];
-            const unrestrictForm = new FormData();
+            const unrestrictUrl = encodeURIComponent(`https://api.real-debrid.com/rest/1.0/unrestrict/link`);
+            
+            const unrestrictForm = new URLSearchParams();
             unrestrictForm.append('link', randomLink);
 
-            const unrestrictRes = await fetch(`https://api.real-debrid.com/rest/1.0/unrestrict/link`, {
+            const unrestrictRes = await fetch(`${CORS_PROXY}${unrestrictUrl}`, {
               method: 'POST',
-              headers: { Authorization: `Bearer ${debridKey}` },
-              body: unrestrictForm,
+              headers: { 
+                Authorization: `Bearer ${debridKey}`,
+                'Content-Type': 'application/x-www-form-urlencoded'
+              },
+              body: unrestrictForm.toString(),
             });
             const unrestrictData = await unrestrictRes.json();
             return unrestrictData.download;
           }
         }
       } else if (debridProvider === 'premiumize') {
-        const pmRes = await fetch(`https://www.premiumize.me/api/transfer/directdl?apikey=${debridKey}&src=magnet:?xt=urn:btih:${hashOrMagnet}`);
+        const pmUrl = encodeURIComponent(`https://www.premiumize.me/api/transfer/directdl?apikey=${debridKey}&src=magnet:?xt=urn:btih:${hashOrMagnet}`);
+        const pmRes = await fetch(`${CORS_PROXY}${pmUrl}`);
         const pmData = await pmRes.json();
         if (pmData.status === 'success' && pmData.content.length > 0) {
           const randomFile = pmData.content[Math.floor(Math.random() * pmData.content.length)];
@@ -166,8 +200,10 @@ export default function App() {
 
     let epStreamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
     try {
-      const torrentioRes = await fetch(`https://torrentio.strem.fun/stream/series/${channel.tmdbId}:${epInfo.season}:${epInfo.episode}.json`);
+      const torrentioTarget = encodeURIComponent(`https://torrentio.strem.fun/stream/series/${channel.tmdbId}:${epInfo.season}:${epInfo.episode}.json`);
+      const torrentioRes = await fetch(`${CORS_PROXY}${torrentioTarget}`);
       const torrentioData = await torrentioRes.json();
+      
       if (torrentioData.streams && torrentioData.streams.length > 0) {
         const hash = torrentioData.streams[0].infoHash || torrentioData.streams[0].url;
         const resolvedEp = await resolveDebridLink(hash);
@@ -209,7 +245,6 @@ export default function App() {
       {/* ----------------- MOBILE RESPONSIVE LAYOUT (PHONES) ----------------- */}
       {isMobile ? (
         <div className="flex flex-col h-full bg-[#0a0f1d] overflow-y-auto">
-          {/* Mobile Header */}
           <div className="flex justify-between items-center bg-[#002855] px-4 py-3 border-b-2 border-cyan-800 sticky top-0 z-20">
             <div className="flex items-center space-x-2">
               <span className="bg-[#e63946] text-white font-bold px-2 py-0.5 rounded text-sm">OPTIMUM</span>
@@ -250,6 +285,13 @@ export default function App() {
             <div className="p-6 flex flex-col justify-center h-full">
               <div className="bg-[#001026] p-4 border border-cyan-800 rounded-lg">
                 <h2 className="text-lg font-bold text-lime-400 mb-3">Debrid Setup</h2>
+                
+                {debridStatusMsg && (
+                  <div className="mb-3 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800">
+                    {debridStatusMsg}
+                  </div>
+                )}
+
                 <label className="block text-xs text-cyan-200 mb-1">Provider:</label>
                 <select
                   value={debridProvider}
@@ -266,7 +308,7 @@ export default function App() {
                 <label className="block text-xs text-cyan-200 mb-1">API Key:</label>
                 <input
                   type="password"
-                  placeholder="Paste Key..."
+                  placeholder="Paste Real-Debrid Key..."
                   value={debridKey}
                   onChange={(e) => {
                     setDebridKey(e.target.value);
@@ -276,10 +318,13 @@ export default function App() {
                 />
 
                 <button
-                  onClick={() => setCurrentScreen('guide')}
+                  onClick={() => {
+                    verifyDebridKey(debridKey);
+                    setCurrentScreen('guide');
+                  }}
                   className="w-full bg-lime-500 text-black font-bold py-2 rounded text-sm"
                 >
-                  Save & Back
+                  Save & Validate Key
                 </button>
               </div>
             </div>
@@ -290,11 +335,7 @@ export default function App() {
         <div className="flex flex-col h-full bg-[#0a0f1d] relative border border-gray-800 p-2">
           {currentScreen === 'guide' && (
             <div className="flex flex-col h-full bg-[#0a0f1d] relative">
-              
-              {/* Top Half Section: Video Window (Left) + Show Meta Box (Right) */}
               <div className="grid grid-cols-12 h-[45%] border-b border-cyan-900">
-                
-                {/* Top-Left: Mini Live Video Window */}
                 <div className="col-span-4 bg-black flex flex-col border-r border-cyan-900 relative">
                   <div className="flex-1 bg-gradient-to-b from-gray-900 to-black flex items-center justify-center border-b border-gray-800 relative">
                     <span className="text-gray-600 text-xs tracking-widest font-mono">[ MINI LIVE PREVIEW ]</span>
@@ -306,12 +347,10 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Middle Vertical Strip: "CHANNEL" Banner */}
                 <div className="col-span-2 bg-[#004b87] flex flex-col items-center justify-center border-r border-cyan-800">
                   <span className="text-cyan-200 font-extrabold text-lg tracking-widest uppercase">CHANNEL</span>
                 </div>
 
-                {/* Top-Right: i-Guide Program Details Pane */}
                 <div className="col-span-6 bg-[#001026] p-3 flex flex-col justify-between relative">
                   <div className="flex justify-between items-center text-cyan-300 font-bold text-sm border-b border-cyan-900/50 pb-1">
                     <span className="text-gray-400 text-xs">Optimum Interactive</span>
@@ -342,7 +381,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Bottom Half: "NOW" / "NEXT" Dual-Column EPG Channel Grid */}
               <div className="flex-1 grid grid-cols-12 bg-[#001026] relative overflow-hidden">
                 <div className="col-span-1 bg-[#121927] flex flex-col items-center justify-center border-r border-gray-800 text-gray-400">
                   <span className="text-[10px] tracking-widest uppercase font-bold text-gray-500 transform -rotate-90">ARCHIVE</span>
@@ -425,8 +463,14 @@ export default function App() {
           {currentScreen === 'settings' && (
             <div className="flex flex-col items-center justify-center h-full bg-[#0a0f1d]">
               <div className="bg-[#001026] p-6 border-4 border-cyan-700 rounded w-2/3 shadow-2xl">
-                <h2 className="text-xl font-bold text-lime-400 mb-4 tracking-wider">i-Guide Settings & Debrid Setup</h2>
+                <h2 className="text-xl font-bold text-lime-400 mb-2 tracking-wider">i-Guide Settings & Debrid Setup</h2>
                 
+                {debridStatusMsg && (
+                  <div className="mb-4 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800">
+                    {debridStatusMsg}
+                  </div>
+                )}
+
                 <div className="mb-4">
                   <label className="block text-xs text-cyan-200 mb-1">Debrid Provider:</label>
                   <select
@@ -446,7 +490,7 @@ export default function App() {
                   <label className="block text-xs text-cyan-200 mb-1">API Key:</label>
                   <input
                     type="password"
-                    placeholder="Paste Debrid API Key..."
+                    placeholder="Paste Real-Debrid API Key..."
                     value={debridKey}
                     onChange={(e) => {
                       setDebridKey(e.target.value);
@@ -457,10 +501,13 @@ export default function App() {
                 </div>
 
                 <button 
-                  onClick={() => setCurrentScreen('guide')} 
+                  onClick={() => {
+                    verifyDebridKey(debridKey);
+                    setCurrentScreen('guide');
+                  }} 
                   className="bg-lime-500 text-black font-extrabold px-4 py-2 w-full text-base mt-2 hover:bg-lime-400 rounded transition-all"
                 >
-                  Save & Exit to Guide [BACK]
+                  Save & Validate Key [BACK]
                 </button>
               </div>
             </div>
@@ -468,7 +515,7 @@ export default function App() {
         </div>
       )}
 
-      {/* ----------------- SEAMLESS VIDEO PLAYER (SHARED) ----------------- */}
+      {/* ----------------- VIDEO PLAYER ----------------- */}
       {currentScreen === 'player' && (
         <div className="relative w-full h-full bg-black flex items-center justify-center">
           {currentEpisodeInfo && (
