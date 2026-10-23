@@ -2,12 +2,11 @@ import React, { useState, useEffect, useRef } from 'react';
 
 const TMDB_API_KEY = '3fd13673b37363d5107711b6d2b311ad';
 
-// Multi-gigabyte Retro Commercial Compilations (Infohashes)
+// Multi-gigabyte Retro Commercial Compilations
 const RETRO_COMMERCIAL_TORRENTS = [
   '8093132bf6e1e8b792ff4a682a201b1a4732d847', // 80s, 90s, 2000s Commercial Compilation
 ];
 
-// 30 POPULAR RETRO TV NETWORKS (TMDB Show Mapping)
 const RETRO_BROADCAST_CHANNELS = [
   // --- MAJOR NETWORKS ---
   { id: 102, name: 'CBS Classic', tmdbId: 1668, showName: 'Friends', category: 'Primetime Sitcom' },
@@ -52,10 +51,14 @@ const RETRO_BROADCAST_CHANNELS = [
 
 export default function App() {
   const [selectedRow, setSelectedRow] = useState(0);
-  const [currentScreen, setCurrentScreen] = useState('guide'); 
+  const [focusArea, setFocusArea] = useState('grid'); // 'grid' or 'menuButton'
+  const [currentScreen, setCurrentScreen] = useState('guide'); // 'guide', 'player', 'settings'
   
+  // Settings Form Focus Handler
+  const [settingsFocus, setSettingsFocus] = useState(0); // 0: Provider, 1: Key, 2: Save Button
+
   // Dual-Player Buffering State
-  const [activePlayer, setActivePlayer] = useState('A'); // 'A' or 'B'
+  const [activePlayer, setActivePlayer] = useState('A');
   const [playerASrc, setPlayerASrc] = useState('');
   const [playerBSrc, setPlayerBSrc] = useState('');
   
@@ -68,38 +71,86 @@ export default function App() {
 
   const videoRefA = useRef(null);
   const videoRefB = useRef(null);
+  const channelRefs = useRef([]);
+  const apiKeyInputRef = useRef(null);
 
-  // D-Pad Remote Navigation Handler
+  // Auto-scroll selected channel row into view so guide is never cut off
+  useEffect(() => {
+    if (focusArea === 'grid' && channelRefs.current[selectedRow]) {
+      channelRefs.current[selectedRow].scrollIntoView({
+        behavior: 'smooth',
+        block: 'nearest',
+      });
+    }
+  }, [selectedRow, focusArea]);
+
+  // Focus API Input in settings screen automatically
+  useEffect(() => {
+    if (currentScreen === 'settings' && settingsFocus === 1 && apiKeyInputRef.current) {
+      apiKeyInputRef.current.focus();
+    }
+  }, [currentScreen, settingsFocus]);
+
+  // Unified Android TV & onn. Remote D-Pad Navigation Engine
   useEffect(() => {
     const handleRemoteControl = (e) => {
       const keyCode = e.keyCode || e.which;
 
+      // Global Quick Settings Shortcut Key (Menu button, keycode 82 or 189)
+      if (keyCode === 82 || keyCode === 189 || e.key === 'c' || e.key === 'C') {
+        setCurrentScreen((prev) => (prev === 'settings' ? 'guide' : 'settings'));
+        return;
+      }
+
+      // ----------------- CABLE GUIDE SCREEN -----------------
       if (currentScreen === 'guide') {
-        if (e.key === 'ArrowDown' || keyCode === 40) {
-          setSelectedRow((prev) => Math.min(prev + 1, RETRO_BROADCAST_CHANNELS.length - 1));
-        } else if (e.key === 'ArrowUp' || keyCode === 38) {
-          setSelectedRow((prev) => Math.max(prev - 1, 0));
-        } else if (e.key === 'Enter' || keyCode === 13 || keyCode === 23 || e.key === 'Select') {
-          launchBroadcast(RETRO_BROADCAST_CHANNELS[selectedRow]);
-        } else if (e.key === 'c' || keyCode === 82 || keyCode === 189) {
-          setCurrentScreen('settings');
+        if (focusArea === 'grid') {
+          if (e.key === 'ArrowDown' || keyCode === 40 || keyCode === 166) { // Channel Down / Arrow Down
+            setSelectedRow((prev) => Math.min(prev + 1, RETRO_BROADCAST_CHANNELS.length - 1));
+          } else if (e.key === 'ArrowUp' || keyCode === 38 || keyCode === 167) { // Channel Up / Arrow Up
+            setSelectedRow((prev) => Math.max(prev - 1, 0));
+          } else if (e.key === 'ArrowRight' || keyCode === 39) {
+            setFocusArea('menuButton'); // Roll over to Menu Button
+          } else if (e.key === 'Enter' || keyCode === 13 || keyCode === 23) {
+            launchBroadcast(RETRO_BROADCAST_CHANNELS[selectedRow]);
+          }
+        } else if (focusArea === 'menuButton') {
+          if (e.key === 'ArrowLeft' || keyCode === 37 || e.key === 'ArrowDown' || keyCode === 40) {
+            setFocusArea('grid');
+          } else if (e.key === 'Enter' || keyCode === 13 || keyCode === 23) {
+            setCurrentScreen('settings');
+          }
         }
-      } else if (currentScreen === 'player') {
+      } 
+      
+      // ----------------- VIDEO PLAYER SCREEN -----------------
+      else if (currentScreen === 'player') {
         if (e.key === 'Escape' || e.key === 'BackSpace' || keyCode === 4 || keyCode === 27) {
           setCurrentScreen('guide');
           setPlayerASrc('');
           setPlayerBSrc('');
         }
-      } else if (currentScreen === 'settings') {
-        if (e.key === 'Escape' || e.key === 'BackSpace' || keyCode === 4) {
+      } 
+      
+      // ----------------- SETTINGS SCREEN -----------------
+      else if (currentScreen === 'settings') {
+        if (e.key === 'ArrowDown' || keyCode === 40) {
+          setSettingsFocus((prev) => Math.min(prev + 1, 2));
+        } else if (e.key === 'ArrowUp' || keyCode === 38) {
+          setSettingsFocus((prev) => Math.max(prev - 1, 0));
+        } else if (e.key === 'Escape' || e.key === 'BackSpace' || keyCode === 4 || keyCode === 27) {
           setCurrentScreen('guide');
+          setFocusArea('grid');
+        } else if ((e.key === 'Enter' || keyCode === 13 || keyCode === 23) && settingsFocus === 2) {
+          setCurrentScreen('guide');
+          setFocusArea('grid');
         }
       }
     };
 
     window.addEventListener('keydown', handleRemoteControl);
     return () => window.removeEventListener('keydown', handleRemoteControl);
-  }, [currentScreen, selectedRow]);
+  }, [currentScreen, selectedRow, focusArea, settingsFocus]);
 
   const fetchRandomEpisode = async (tmdbId) => {
     try {
@@ -217,44 +268,61 @@ export default function App() {
   };
 
   return (
-    <div className="w-screen h-screen bg-[#001845] font-mono select-none overflow-hidden flex flex-col p-4">
-      {/* GUIDE SCREEN */}
+    // Safe Overscan Padding for Android TV Box Display Boundaries
+    <div className="w-screen h-screen bg-[#001845] font-mono select-none overflow-hidden flex flex-col px-8 py-6">
+      
+      {/* ----------------- OPTIMUM CABLE TV GUIDE UI ----------------- */}
       {currentScreen === 'guide' && (
-        <div className="flex flex-col h-full border-8 border-[#001233] p-2 bg-[#001845]">
-          <div className="flex justify-between items-center bg-[#002855] p-3 border-b-4 border-[#0466c8]">
+        <div className="flex flex-col h-full border-4 border-[#001233] p-2 bg-[#001845] overflow-hidden">
+          
+          {/* Top Header */}
+          <div className="flex justify-between items-center bg-[#002855] px-4 py-2 border-b-4 border-[#0466c8]">
             <div className="flex items-center space-x-3">
-              <span className="bg-[#e63946] text-white font-bold px-3 py-1 rounded text-xl">OPTIMUM</span>
-              <span className="text-xl font-bold text-[#90e0ef]">i-GUIDE TV (2003)</span>
+              <span className="bg-[#e63946] text-white font-bold px-3 py-1 rounded text-lg tracking-wider">OPTIMUM</span>
+              <span className="text-lg font-bold text-[#90e0ef]">i-GUIDE TV (2003)</span>
             </div>
-            <div className="text-[#caf0f8] font-bold text-lg">
-              {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-            </div>
+            
+            {/* D-Pad Focusable Debrid Settings Button */}
+            <button
+              onClick={() => setCurrentScreen('settings')}
+              className={`px-3 py-1 rounded text-sm font-bold transition-all ${
+                focusArea === 'menuButton'
+                  ? 'bg-yellow-400 text-black ring-4 ring-white scale-105'
+                  : 'bg-[#0466c8] text-white hover:bg-blue-600'
+              }`}
+            >
+              ⚙ DEBRID SETTINGS [►]
+            </button>
           </div>
 
-          <div className="grid grid-cols-3 gap-4 my-4 h-1/3">
-            <div className="bg-black border-4 border-[#0466c8] flex flex-col items-center justify-center text-[#90e0ef] p-2 text-center">
+          {/* Preview Window & Active Show Info */}
+          <div className="grid grid-cols-3 gap-3 my-3 h-2/5 min-h-[160px]">
+            <div className="bg-black border-2 border-[#0466c8] flex flex-col items-center justify-center text-[#90e0ef] p-2 text-center">
               <span className="text-xs text-yellow-400 font-bold mb-1">DEBRID ENGINE</span>
-              <span className="text-xs text-gray-400">Zero-Lag Dual Buffer</span>
+              <span className="text-[10px] text-gray-400">Zero-Lag Dual Buffer Active</span>
             </div>
-            <div className="col-span-2 bg-[#002855] p-4 border-2 border-[#0466c8] flex flex-col justify-center">
+            <div className="col-span-2 bg-[#002855] p-3 border-2 border-[#0466c8] flex flex-col justify-center">
               <span className="text-xs text-[#90e0ef]">CH {RETRO_BROADCAST_CHANNELS[selectedRow].id} - {RETRO_BROADCAST_CHANNELS[selectedRow].category}</span>
-              <h2 className="text-2xl font-bold text-yellow-400">{RETRO_BROADCAST_CHANNELS[selectedRow].showName} ({RETRO_BROADCAST_CHANNELS[selectedRow].name})</h2>
-              <p className="text-gray-300 mt-2 text-sm">Tune in to stream pre-buffered Debrid commercials followed seamlessly by random TV episodes.</p>
+              <h2 className="text-xl font-bold text-yellow-400">{RETRO_BROADCAST_CHANNELS[selectedRow].showName} ({RETRO_BROADCAST_CHANNELS[selectedRow].name})</h2>
+              <p className="text-gray-300 mt-1 text-xs">Tune in to stream pre-buffered Debrid commercials followed seamlessly by random TV episodes.</p>
             </div>
           </div>
 
+          {/* Auto-scrolling Electronic Program Guide (EPG) Grid */}
           <div className="flex-1 bg-[#001233] border-2 border-[#0466c8] overflow-y-auto">
             {RETRO_BROADCAST_CHANNELS.map((ch, idx) => {
-              const isFocused = idx === selectedRow;
+              const isFocused = idx === selectedRow && focusArea === 'grid';
               return (
                 <div
                   key={ch.id}
+                  ref={(el) => (channelRefs.current[idx] = el)}
                   onClick={() => {
                     setSelectedRow(idx);
+                    setFocusArea('grid');
                     launchBroadcast(ch);
                   }}
-                  className={`grid grid-cols-4 p-3 border-b border-blue-900 cursor-pointer ${
-                    isFocused ? 'bg-yellow-500 text-black font-bold scale-[1.01]' : 'text-white hover:bg-[#002855]'
+                  className={`grid grid-cols-4 p-2 border-b border-blue-900 cursor-pointer transition-all ${
+                    isFocused ? 'bg-yellow-500 text-black font-bold scale-[1.005] z-10' : 'text-white hover:bg-[#002855]'
                   }`}
                 >
                   <div className="font-bold border-r border-blue-800 pr-2">CH {ch.id}</div>
@@ -265,15 +333,16 @@ export default function App() {
             })}
           </div>
 
+          {/* Controls Navigation Bar */}
           <div className="mt-2 text-xs text-gray-300 flex justify-between bg-[#002855] p-2 border-t border-[#0466c8]">
-            <span>[▲/▼] Scroll Channels</span>
-            <span>[OK] Watch Broadcast</span>
-            <span>[MENU / C] Debrid Settings</span>
+            <span>[▲/▼] Scroll 30 Channels</span>
+            <span>[►] Highlight Settings Button</span>
+            <span>[OK] Launch Broadcast</span>
           </div>
         </div>
       )}
 
-      {/* PLAYER SCREEN */}
+      {/* ----------------- SEAMLESS VIDEO PLAYER ----------------- */}
       {currentScreen === 'player' && (
         <div className="relative w-full h-full bg-black flex items-center justify-center">
           {currentEpisodeInfo && (
@@ -306,12 +375,13 @@ export default function App() {
         </div>
       )}
 
-      {/* SETTINGS SCREEN */}
+      {/* ----------------- SETTINGS & DEBRID KEY INPUT ----------------- */}
       {currentScreen === 'settings' && (
         <div className="flex flex-col items-center justify-center h-full">
-          <div className="bg-[#002855] p-6 border-4 border-[#0466c8] rounded w-2/3">
-            <h2 className="text-xl font-bold text-yellow-400 mb-4">Debrid API Account Setup</h2>
-            <div className="mb-4">
+          <div className="bg-[#002855] p-6 border-4 border-[#0466c8] rounded w-2/3 shadow-2xl">
+            <h2 className="text-xl font-bold text-yellow-400 mb-4">Debrid Account Setup</h2>
+            
+            <div className={`mb-4 p-2 rounded ${settingsFocus === 0 ? 'bg-blue-900 ring-2 ring-yellow-400' : ''}`}>
               <label className="block text-xs text-gray-300 mb-1">Debrid Provider:</label>
               <select
                 value={debridProvider}
@@ -319,16 +389,17 @@ export default function App() {
                   setDebridProvider(e.target.value);
                   localStorage.setItem('debrid_provider', e.target.value);
                 }}
-                className="w-full p-2 bg-black text-white border border-[#0466c8]"
+                className="w-full p-2 bg-black text-white border border-[#0466c8] text-sm"
               >
                 <option value="realdebrid">Real-Debrid</option>
                 <option value="premiumize">Premiumize.me</option>
               </select>
             </div>
 
-            <div className="mb-4">
+            <div className={`mb-4 p-2 rounded ${settingsFocus === 1 ? 'bg-blue-900 ring-2 ring-yellow-400' : ''}`}>
               <label className="block text-xs text-gray-300 mb-1">API Key:</label>
               <input
+                ref={apiKeyInputRef}
                 type="password"
                 placeholder="Paste Debrid API Key..."
                 value={debridKey}
@@ -336,15 +407,22 @@ export default function App() {
                   setDebridKey(e.target.value);
                   localStorage.setItem('debrid_api_key', e.target.value);
                 }}
-                className="w-full p-2 bg-black text-white border border-[#0466c8]"
+                className="w-full p-2 bg-black text-white border border-[#0466c8] text-sm"
               />
             </div>
 
             <button 
-              onClick={() => setCurrentScreen('guide')} 
-              className="bg-yellow-500 text-black font-bold px-4 py-2 w-full text-lg mt-2 hover:bg-yellow-400"
+              onClick={() => {
+                setCurrentScreen('guide');
+                setFocusArea('grid');
+              }} 
+              className={`w-full p-3 font-bold text-base mt-2 transition-all rounded ${
+                settingsFocus === 2
+                  ? 'bg-yellow-400 text-black ring-4 ring-white scale-102'
+                  : 'bg-yellow-500 text-black hover:bg-yellow-400'
+              }`}
             >
-              Save & Exit [BACK]
+              Save & Return to Cable Guide [BACK]
             </button>
           </div>
         </div>
