@@ -36,10 +36,12 @@ jobs:
       - name: Accept Android SDK Licenses
         run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
 
-      - name: Initialize & Sync Capacitor Android
-        run: |
-          npx cap add android || true
-          npx cap sync android
+      - name: Add Android Platform
+        run: npx cap add android
+        continue-on-error: true
+
+      - name: Sync Capacitor Android
+        run: npx cap sync android
 
       - name: Configure Android TV Leanback Banner & Launcher
         run: |
