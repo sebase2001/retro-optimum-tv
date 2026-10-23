@@ -3,7 +3,12 @@ name: Build Android TV APK
 on:
   push:
     branches: [ main, master ]
+  release:
+    types: [ published ]
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -21,8 +26,8 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build Web App
-        run: npm run build
+      - name: Build Web App with Vite
+        run: npx vite build
 
       - name: Set up Java JDK 17
         uses: actions/setup-java@v4
@@ -59,3 +64,9 @@ jobs:
         with:
           name: Optimum-TV-Retro-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload APK to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: android/app/build/outputs/apk/debug/app-debug.apk
