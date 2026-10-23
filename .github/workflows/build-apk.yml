@@ -1,10 +1,8 @@
-name: Build Android TV APK
+name: Build and Release Android TV APK
 
 on:
   push:
     branches: [ main, master ]
-  release:
-    types: [ published ]
   workflow_dispatch:
 
 permissions:
@@ -59,14 +57,16 @@ jobs:
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload Built APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Optimum-TV-Retro-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+      - name: Generate Version Tag
+        id: tag
+        run: echo "tag_name=v1.0.$(date +%Y%m%d_%H%M%S)" >> $GITHUB_OUTPUT
 
-      - name: Upload APK to GitHub Release
-        if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v3
+      - name: Create GitHub Release and Upload APK
+        uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag_name }}
+          name: "Optimum Retro TV Build (${{ steps.tag.outputs.tag_name }})"
+          body: "Automated Android TV build featuring 30 retro channels, dual-buffer Debrid commercial streaming, and TMDB random episode picker."
           files: android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
