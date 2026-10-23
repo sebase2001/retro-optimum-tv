@@ -26,7 +26,7 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Build Web App with Vite
+      - name: Build Web App
         run: npx vite build
 
       - name: Set up Java JDK 17
@@ -67,6 +67,6 @@ jobs:
 
       - name: Upload APK to GitHub Release
         if: github.event_name == 'release'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: android/app/build/outputs/apk/debug/app-debug.apk
