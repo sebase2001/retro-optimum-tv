@@ -7,11 +7,13 @@ const RETRO_COMMERCIAL_TORRENTS = [
 ];
 
 const OPTIMUM_CHANNELS = [
+  { id: 12, callsign: 'NEWS12', name: 'News 12 Local', showNow: 'Local Nightly News', showNext: 'News 12 Investigates', rating: 'TV-G', desc: 'Breakdown of local tri-state news, traffic, and community headlines.', tmdbId: 1416 },
   { id: 14, callsign: 'OPTHD', name: 'Optimum Channel', showNow: "What's On", showNext: "What's On", rating: 'PG/TV-PG', desc: "Tune in to find out what's on when and see highlights of some of the hundreds of programs...", tmdbId: 1668 },
   { id: 15, callsign: 'QVCHD', name: 'QVC HD', showNow: 'Isaac Mizrahi Live', showNext: 'orYANY Handbags', rating: 'TV-G', desc: 'Live shopping showcase featuring fashion, home decor, and electronics.', tmdbId: 1900 },
   { id: 16, callsign: 'WNJUH', name: 'Telemundo 47', showNow: 'Lo Mejor de Caso...', showNext: 'Suelta la Sopa', rating: 'TV-14', desc: 'Programa de entretenimiento y noticias de la farandula internacional.', tmdbId: 2046 },
   { id: 17, callsign: 'UNIHD', name: 'Univision HD', showNow: '¿Quién Tiene la...', showNext: 'Casos de Familia', rating: 'TV-PG', desc: 'Debates y casos familiares de la vida real conducidos en vivo.', tmdbId: 4607 },
   { id: 18, callsign: 'GOVT', name: 'Government Ch', showNow: 'Government Access', showNext: 'Government Access', rating: 'G', desc: 'Local municipal board meetings, public announcements, and community updates.', tmdbId: 4626 },
+  { id: 48, callsign: 'WEATHER', name: 'Weatherscan', showNow: 'Local on the 8s', showNext: 'National Radar', rating: 'G', desc: '24/7 continuous local radar, temperature trends, and weekly forecast.', isWeatherChan: true },
   { id: 102, callsign: 'CBSHD', name: 'CBS Network', showNow: 'Friends', showNext: 'Frasier', rating: 'TV-PG', desc: 'Six young adults navigate life, love, and careers in New York City.', tmdbId: 1668 },
   { id: 104, callsign: 'NBCHD', name: 'NBC Comedy', showNow: 'Seinfeld', showNext: '30 Rock', rating: 'TV-14', desc: 'The continuous comedic misadventures of neurotic New York comedian Jerry Seinfeld.', tmdbId: 1900 },
   { id: 105, callsign: 'FOXHD', name: 'FOX Sci-Fi', showNow: 'The X-Files', showNext: 'Fringe', rating: 'TV-14', desc: 'FBI agents Fox Mulder and Dana Scully investigate unsolved paranormal cases.', tmdbId: 2046 },
@@ -21,9 +23,12 @@ const OPTIMUM_CHANNELS = [
 
 export default function App() {
   const [selectedRow, setSelectedRow] = useState(0);
-  const [currentScreen, setCurrentScreen] = useState('guide'); 
+  const [currentScreen, setCurrentScreen] = useState('guide'); // 'guide', 'player', 'settings', 'weatherscan'
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
+  // Weather State
+  const [weatherData, setWeatherData] = useState(null);
+
   // Dual-Player Buffering State
   const [activePlayer, setActivePlayer] = useState('A');
   const [playerASrc, setPlayerASrc] = useState('');
@@ -33,8 +38,12 @@ export default function App() {
   const [isCommercialActive, setIsCommercialActive] = useState(false);
   const [statusLog, setStatusLog] = useState('');
 
-  // Debrid State
-  const [debridKey, setDebridKey] = useState(localStorage.getItem('debrid_api_key') || '');
+  // Premiumize Key
+  const [premiumizeKey, setPremiumizeKey] = useState(localStorage.getItem('premiumize_api_key') || '');
+
+  // Touch Swipe Gesture Refs
+  const touchStartX = useRef(0);
+  const touchEndX = useRef(0);
 
   const videoRefA = useRef(null);
   const videoRefB = useRef(null);
@@ -46,13 +55,46 @@ export default function App() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
+  // Fetch Live Weather Data from Open-Meteo API
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        const res = await fetch('https://api.open-meteo.com/v1/forecast?latitude=40.7128&longitude=-74.0060&current=temperature_2m,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,weather_code&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=auto');
+        const data = await res.json();
+        setWeatherData(data);
+      } catch (err) {
+        console.error('Error loading weather data:', err);
+      }
+    };
+    fetchWeather();
+  }, []);
+
+  // Touch Swipe Handler
+  const handleTouchStart = (e) => {
+    touchStartX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchMove = (e) => {
+    touchEndX.current = e.targetTouches[0].clientX;
+  };
+
+  const handleTouchEnd = () => {
+    if (touchStartX.current < 50 && touchEndX.current - touchStartX.current > 100) {
+      if (currentScreen !== 'guide') {
+        setCurrentScreen('guide');
+        setPlayerASrc('');
+        setPlayerBSrc('');
+      }
+    }
+  };
+
   useEffect(() => {
     if (rowRefs.current[selectedRow]) {
       rowRefs.current[selectedRow].scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
   }, [selectedRow]);
 
-  // Keybindings
+  // Keybindings for TV
   useEffect(() => {
     const handleRemoteControl = (e) => {
       const keyCode = e.keyCode || e.which;
@@ -63,19 +105,20 @@ export default function App() {
         } else if (e.key === 'ArrowUp' || keyCode === 38) {
           setSelectedRow((prev) => Math.max(prev - 1, 0));
         } else if (e.key === 'Enter' || keyCode === 13 || keyCode === 23) {
-          launchBroadcast(OPTIMUM_CHANNELS[selectedRow]);
+          const targetCh = OPTIMUM_CHANNELS[selectedRow];
+          if (targetCh.isWeatherChan) {
+            setCurrentScreen('weatherscan');
+          } else {
+            launchBroadcast(targetCh);
+          }
         } else if (e.key === 'c' || keyCode === 82 || keyCode === 189) {
           setCurrentScreen('settings');
         }
-      } else if (currentScreen === 'player') {
+      } else if (currentScreen === 'player' || currentScreen === 'weatherscan' || currentScreen === 'settings') {
         if (e.key === 'Escape' || e.key === 'BackSpace' || keyCode === 4 || keyCode === 27) {
           setCurrentScreen('guide');
           setPlayerASrc('');
           setPlayerBSrc('');
-        }
-      } else if (currentScreen === 'settings') {
-        if (e.key === 'Escape' || e.key === 'BackSpace' || keyCode === 4 || keyCode === 27) {
-          setCurrentScreen('guide');
         }
       }
     };
@@ -83,26 +126,6 @@ export default function App() {
     window.addEventListener('keydown', handleRemoteControl);
     return () => window.removeEventListener('keydown', handleRemoteControl);
   }, [currentScreen, selectedRow]);
-
-  const verifyDebridKey = async (key) => {
-    if (!key) {
-      setStatusLog('No Real-Debrid key entered.');
-      return;
-    }
-    try {
-      const res = await fetch('https://api.real-debrid.com/rest/1.0/user', {
-        headers: { Authorization: `Bearer ${key}` }
-      });
-      const data = await res.json();
-      if (data.username) {
-        setStatusLog(`Real-Debrid Connected: ${data.username} (${data.type})`);
-      } else {
-        setStatusLog('Invalid API Key.');
-      }
-    } catch (e) {
-      setStatusLog('Key validation error.');
-    }
-  };
 
   const fetchRandomEpisode = async (tmdbId) => {
     try {
@@ -127,94 +150,65 @@ export default function App() {
     }
   };
 
-  const resolveDebridStream = async (tmdbId, season, episode) => {
-    if (!debridKey) {
-      setStatusLog('No Debrid Key set. Using sample stream fallback.');
+  const resolvePremiumizeStream = async (tmdbId, season, episode) => {
+    if (!premiumizeKey) {
+      setStatusLog('No Premiumize Key set. Using sample fallback.');
       return null;
     }
 
     try {
-      setStatusLog('Searching Torrentio with Real-Debrid key...');
-      // Formatted Torrentio URL with embedded Real-Debrid API Key
-      const torrentioUrl = `https://torrentio.strem.fun/realdebrid=${debridKey}/stream/series/${tmdbId}:${season}:${episode}.json`;
+      setStatusLog('Searching Torrentio with Premiumize key...');
+      const torrentioUrl = `https://torrentio.strem.fun/premiumize=${premiumizeKey}/stream/series/${tmdbId}:${season}:${episode}.json`;
       
       const res = await fetch(torrentioUrl);
       const data = await res.json();
 
       if (data.streams && data.streams.length > 0) {
-        // Find cached stream or direct download link returned by Torrentio
-        const stream = data.streams.find((s) => s.url || s.externalUrl) || data.streams[0];
-        
-        if (stream.url) {
-          setStatusLog('Direct Real-Debrid stream found!');
-          return stream.url;
+        const directStream = data.streams.find((s) => s.url || s.externalUrl) || data.streams[0];
+        if (directStream.url) {
+          setStatusLog('Direct Premiumize stream found!');
+          return directStream.url;
         }
 
-        if (stream.infoHash) {
-          setStatusLog('Adding Magnet to Real-Debrid...');
-          const formData = new URLSearchParams();
-          formData.append('magnet', `magnet:?xt=urn:btih:${stream.infoHash}`);
-
-          const addRes = await fetch('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${debridKey}`,
-              'Content-Type': 'application/x-www-form-urlencoded'
-            },
-            body: formData.toString()
-          });
-          const addData = await addRes.json();
-
-          if (addData.id) {
-            const infoRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`, {
-              headers: { Authorization: `Bearer ${debridKey}` }
-            });
-            const infoData = await infoRes.json();
-
-            if (infoData.links && infoData.links.length > 0) {
-              const unrestrictForm = new URLSearchParams();
-              unrestrictForm.append('link', infoData.links[0]);
-
-              const unrestrictRes = await fetch('https://api.real-debrid.com/rest/1.0/unrestrict/link', {
-                method: 'POST',
-                headers: {
-                  Authorization: `Bearer ${debridKey}`,
-                  'Content-Type': 'application/x-www-form-urlencoded'
-                },
-                body: unrestrictForm.toString()
-              });
-              const unrestrictData = await unrestrictRes.json();
-              if (unrestrictData.download) {
-                setStatusLog('Real-Debrid link unrestricted successfully!');
-                return unrestrictData.download;
-              }
+        if (directStream.infoHash) {
+          setStatusLog('Resolving Magnet with Premiumize DirectDL...');
+          const pmRes = await fetch(`https://www.premiumize.me/api/transfer/directdl?apikey=${premiumizeKey}&src=magnet:?xt=urn:btih:${directStream.infoHash}`);
+          const pmData = await pmRes.json();
+          
+          if (pmData.status === 'success' && pmData.content && pmData.content.length > 0) {
+            const targetFile = pmData.content.find((f) => f.link && (f.link.endsWith('.mp4') || f.link.endsWith('.mkv'))) || pmData.content[0];
+            if (targetFile.link) {
+              setStatusLog('Stream resolved successfully!');
+              return targetFile.link;
             }
           }
         }
       } else {
-        setStatusLog('No torrents found on Torrentio for this episode.');
+        setStatusLog('No torrents found on Torrentio.');
       }
     } catch (e) {
-      console.error('Error resolving Debrid stream:', e);
-      setStatusLog('Error connecting to Torrentio / Real-Debrid.');
+      console.error('Error resolving stream:', e);
+      setStatusLog('Error connecting to Premiumize.');
     }
     return null;
   };
 
   const launchBroadcast = async (channel) => {
+    if (channel.isWeatherChan) {
+      setCurrentScreen('weatherscan');
+      return;
+    }
+
     setCurrentScreen('player');
     setIsCommercialActive(true);
-    setStatusLog('Fetching random episode details from TMDB...');
+    setStatusLog('Fetching random episode from TMDB...');
 
     const epInfo = await fetchRandomEpisode(channel.tmdbId);
     setCurrentEpisodeInfo(epInfo);
     setStatusLog(`Selected: ${epInfo.showName} S${epInfo.season}E${epInfo.episode}`);
 
-    // Resolve episode via Real-Debrid
-    const resolvedEpUrl = await resolveDebridStream(channel.tmdbId, epInfo.season, epInfo.episode);
+    const resolvedEpUrl = await resolvePremiumizeStream(channel.tmdbId, epInfo.season, epInfo.episode);
     const finalEpStreamUrl = resolvedEpUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-
-    // Commercial sample feed
     const commStreamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
     setPlayerASrc(commStreamUrl);
@@ -238,34 +232,44 @@ export default function App() {
 
   const activeCh = OPTIMUM_CHANNELS[selectedRow];
 
+  // Weather Code to Icon Translator
+  const getWeatherIcon = (code) => {
+    if (code === 0) return '☀️';
+    if (code <= 3) return '🌤️';
+    if (code <= 48) return '🌫️';
+    if (code <= 67) return '🌧️';
+    if (code <= 77) return '❄️';
+    return '🌩️';
+  };
+
   return (
-    <div className="w-screen h-screen bg-black font-sans select-none overflow-hidden flex flex-col text-white">
+    <div 
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      className="w-screen h-screen bg-black font-sans select-none overflow-hidden flex flex-col text-white relative"
+    >
       
-      {/* MOBILE LAYOUT */}
+      {/* MOBILE RESPONSIVE LAYOUT */}
       {isMobile ? (
-        <div className="flex flex-col h-full bg-[#0a0f1d] overflow-y-auto">
+        <div className="flex flex-col h-full bg-[#0a0f1d] pb-14">
           <div className="flex justify-between items-center bg-[#002855] px-4 py-3 border-b-2 border-cyan-800 sticky top-0 z-20">
             <div className="flex items-center space-x-2">
               <span className="bg-[#e63946] text-white font-bold px-2 py-0.5 rounded text-sm">OPTIMUM</span>
               <span className="text-sm font-bold text-cyan-300">Retro Mobile</span>
             </div>
-            <button
-              onClick={() => setCurrentScreen('settings')}
-              className="bg-cyan-700 text-white px-3 py-1 rounded text-xs font-bold"
-            >
-              ⚙ Settings
-            </button>
+            <span className="text-[11px] text-gray-400">Swipe right to go back</span>
           </div>
 
           {currentScreen === 'guide' && (
-            <div className="flex-1 p-3 flex flex-col space-y-3">
-              <p className="text-xs text-gray-400 text-center mb-1">Tap any channel to launch random Debrid broadcast:</p>
+            <div className="flex-1 p-3 flex flex-col space-y-3 overflow-y-auto">
+              <p className="text-xs text-gray-400 text-center mb-1">Tap any channel to launch broadcast:</p>
               
               {OPTIMUM_CHANNELS.map((ch) => (
                 <div
                   key={ch.id}
                   onClick={() => launchBroadcast(ch)}
-                  className="bg-[#001026] border border-cyan-900 rounded-lg p-3 flex justify-between items-center active:bg-cyan-950 transition-all shadow-md"
+                  className="bg-[#001026] border border-cyan-900 rounded-lg p-3 flex justify-between items-center active:bg-cyan-950 transition-all shadow-md active:scale-98"
                 >
                   <div className="flex flex-col">
                     <div className="flex items-center space-x-2">
@@ -274,40 +278,56 @@ export default function App() {
                     </div>
                     <span className="text-xs text-gray-300 mt-1">Now Playing: {ch.showNow}</span>
                   </div>
-                  <span className="text-lime-400 text-sm font-bold bg-lime-950/60 px-3 py-1.5 rounded-full border border-lime-800">▶ Play</span>
+                  <span className="text-lime-400 text-sm font-bold bg-lime-950/60 px-3 py-1.5 rounded-full border border-lime-800">
+                    {ch.isWeatherChan ? '☀️ Weather' : '▶ Play'}
+                  </span>
                 </div>
               ))}
+            </div>
+          )}
+
+          {currentScreen === 'weatherscan' && (
+            <div className="p-4 flex flex-col items-center justify-center h-full bg-[#001026]">
+              <h2 className="text-xl font-bold text-yellow-400 mb-2">☀️ WEATHERSCAN LOCAL FOR 8s</h2>
+              {weatherData && (
+                <div className="w-full bg-[#00264d] p-4 rounded-lg border border-cyan-700 flex flex-col items-center">
+                  <span className="text-5xl my-2">{getWeatherIcon(weatherData.current.weather_code)}</span>
+                  <span className="text-4xl font-extrabold text-cyan-200">{Math.round(weatherData.current.temperature_2m)}°F</span>
+                  <span className="text-xs text-gray-300 mt-1">Wind: {weatherData.current.wind_speed_10m} mph</span>
+
+                  <div className="grid grid-cols-4 gap-2 w-full mt-4 pt-4 border-t border-cyan-800 text-center">
+                    {weatherData.daily.time.slice(0, 4).map((date, idx) => (
+                      <div key={date} className="bg-[#001026] p-2 rounded border border-cyan-900">
+                        <span className="block text-[10px] font-bold text-cyan-300">{new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span className="text-xl block my-1">{getWeatherIcon(weatherData.daily.weather_code[idx])}</span>
+                        <span className="text-xs font-bold text-white">{Math.round(weatherData.daily.temperature_2m_max[idx])}°</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {currentScreen === 'settings' && (
             <div className="p-6 flex flex-col justify-center h-full">
               <div className="bg-[#001026] p-4 border border-cyan-800 rounded-lg">
-                <h2 className="text-lg font-bold text-lime-400 mb-3">Debrid Setup</h2>
+                <h2 className="text-lg font-bold text-lime-400 mb-3">Premiumize Setup</h2>
                 
-                {statusLog && (
-                  <div className="mb-3 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800 font-mono">
-                    {statusLog}
-                  </div>
-                )}
-
-                <label className="block text-xs text-cyan-200 mb-1">Real-Debrid API Key:</label>
+                <label className="block text-xs text-cyan-200 mb-1">API Key / PIN:</label>
                 <input
                   type="password"
-                  placeholder="Paste Real-Debrid Key..."
-                  value={debridKey}
+                  placeholder="Paste Premiumize Key..."
+                  value={premiumizeKey}
                   onChange={(e) => {
-                    setDebridKey(e.target.value);
-                    localStorage.setItem('debrid_api_key', e.target.value);
+                    setPremiumizeKey(e.target.value);
+                    localStorage.setItem('premiumize_api_key', e.target.value);
                   }}
                   className="w-full p-2 bg-black text-white border border-cyan-800 text-sm rounded mb-4"
                 />
 
                 <button
-                  onClick={() => {
-                    verifyDebridKey(debridKey);
-                    setCurrentScreen('guide');
-                  }}
+                  onClick={() => setCurrentScreen('guide')}
                   className="w-full bg-lime-500 text-black font-bold py-2 rounded text-sm"
                 >
                   Save & Validate Key
@@ -315,9 +335,40 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* STICKY BOTTOM TAB NAVIGATION BAR */}
+          <div className="fixed bottom-0 left-0 right-0 h-14 bg-[#001026] border-t border-cyan-900 flex justify-around items-center z-30">
+            <button
+              onClick={() => setCurrentScreen('guide')}
+              className={`flex flex-col items-center justify-center w-full h-full text-xs font-bold ${
+                currentScreen === 'guide' ? 'text-lime-400 bg-cyan-950/40' : 'text-gray-400'
+              }`}
+            >
+              <span>📺</span>
+              <span>Guide</span>
+            </button>
+            <button
+              onClick={() => setCurrentScreen('weatherscan')}
+              className={`flex flex-col items-center justify-center w-full h-full text-xs font-bold ${
+                currentScreen === 'weatherscan' ? 'text-lime-400 bg-cyan-950/40' : 'text-gray-400'
+              }`}
+            >
+              <span>🌤️</span>
+              <span>Weather</span>
+            </button>
+            <button
+              onClick={() => setCurrentScreen('settings')}
+              className={`flex flex-col items-center justify-center w-full h-full text-xs font-bold ${
+                currentScreen === 'settings' ? 'text-lime-400 bg-cyan-950/40' : 'text-gray-400'
+              }`}
+            >
+              <span>⚙</span>
+              <span>Settings</span>
+            </button>
+          </div>
         </div>
       ) : (
-        /* TV i-GUIDE LAYOUT */
+        /* TV i-GUIDE LAYOUT WITH BOTTOM WEEKLY WEATHER BAR */
         <div className="flex flex-col h-full bg-[#0a0f1d] relative border border-gray-800 p-2">
           {currentScreen === 'guide' && (
             <div className="flex flex-col h-full bg-[#0a0f1d] relative">
@@ -429,56 +480,89 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="h-8 bg-[#000d1a] border-t border-cyan-900 flex justify-between items-center px-4 text-xs font-bold text-cyan-200">
-                <div className="flex items-center space-x-1">
-                  <span className="bg-yellow-500 text-black px-1.5 py-0.5 rounded text-[10px] font-black">▲</span>
-                  <span>OPTIONS</span>
+              {/* RECONSTRUCTED BOTTOM WEEKLY WEATHER BAR FROM REFERENCE PHOTO */}
+              <div className="h-10 bg-[#000a14] border-t-2 border-cyan-800 flex justify-between items-center px-4 font-bold text-xs">
+                <div className="flex items-center space-x-2 text-cyan-300">
+                  <span className="text-yellow-400 font-black uppercase tracking-wider">WEATHER</span>
+                  <span className="text-white">TODAY</span>
+                  {weatherData && (
+                    <span className="flex items-center space-x-1 bg-cyan-950 px-2 py-0.5 rounded border border-cyan-800">
+                      <span>{getWeatherIcon(weatherData.current.weather_code)}</span>
+                      <span className="text-yellow-400">{Math.round(weatherData.current.temperature_2m)}°F</span>
+                    </span>
+                  )}
                 </div>
-                
-                <button
-                  onClick={() => setCurrentScreen('settings')}
-                  className="flex items-center space-x-1 bg-cyan-700 text-white px-2 py-0.5 rounded hover:bg-cyan-600 text-[11px]"
-                >
-                  <span className="bg-cyan-900 px-1 rounded text-[10px]">C</span>
-                  <span>EXPAND / SETTINGS</span>
-                </button>
+
+                {/* 4-Day Forecast Strip */}
+                {weatherData && (
+                  <div className="flex items-center space-x-6 text-gray-200">
+                    {weatherData.daily.time.slice(1, 5).map((date, idx) => (
+                      <div key={date} className="flex items-center space-x-1">
+                        <span className="text-cyan-400 font-bold">{new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span>{getWeatherIcon(weatherData.daily.weather_code[idx + 1])}</span>
+                        <span className="text-white font-mono">{Math.round(weatherData.daily.temperature_2m_max[idx + 1])}°</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
+            </div>
+          )}
+
+          {/* WEATHERSCAN FULLSCREEN CHANNEL */}
+          {currentScreen === 'weatherscan' && (
+            <div className="flex flex-col items-center justify-center h-full bg-[#001026] p-8">
+              <h1 className="text-3xl font-black text-yellow-400 mb-6">☀️ WEATHERSCAN - LOCAL ON THE 8s</h1>
+              {weatherData && (
+                <div className="w-2/3 bg-[#00264d] p-6 rounded-xl border-4 border-cyan-600 flex flex-col items-center shadow-2xl">
+                  <span className="text-7xl mb-2">{getWeatherIcon(weatherData.current.weather_code)}</span>
+                  <span className="text-5xl font-black text-cyan-200 mb-2">{Math.round(weatherData.current.temperature_2m)}°F</span>
+                  <span className="text-sm text-gray-300">Wind: {weatherData.current.wind_speed_10m} mph</span>
+
+                  <div className="grid grid-cols-4 gap-4 w-full mt-6 pt-6 border-t border-cyan-800 text-center">
+                    {weatherData.daily.time.slice(0, 4).map((date, idx) => (
+                      <div key={date} className="bg-[#001026] p-3 rounded-lg border border-cyan-900">
+                        <span className="block text-sm font-bold text-cyan-300">{new Date(date).toLocaleDateString('en-US', { weekday: 'short' })}</span>
+                        <span className="text-3xl block my-2">{getWeatherIcon(weatherData.daily.weather_code[idx])}</span>
+                        <span className="text-lg font-bold text-white">{Math.round(weatherData.daily.temperature_2m_max[idx])}°</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <button 
+                onClick={() => setCurrentScreen('guide')}
+                className="mt-6 bg-yellow-500 text-black font-extrabold px-6 py-2 rounded text-lg hover:bg-yellow-400"
+              >
+                Return to Guide [BACK]
+              </button>
             </div>
           )}
 
           {currentScreen === 'settings' && (
             <div className="flex flex-col items-center justify-center h-full bg-[#0a0f1d]">
               <div className="bg-[#001026] p-6 border-4 border-cyan-700 rounded w-2/3 shadow-2xl">
-                <h2 className="text-xl font-bold text-lime-400 mb-2 tracking-wider">i-Guide Settings & Debrid Setup</h2>
+                <h2 className="text-xl font-bold text-lime-400 mb-2 tracking-wider">i-Guide Settings & Premiumize Setup</h2>
                 
-                {statusLog && (
-                  <div className="mb-4 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800 font-mono">
-                    {statusLog}
-                  </div>
-                )}
-
                 <div className="mb-4">
-                  <label className="block text-xs text-cyan-200 mb-1">Real-Debrid API Key:</label>
+                  <label className="block text-xs text-cyan-200 mb-1">Premiumize API Key / PIN:</label>
                   <input
                     type="password"
-                    placeholder="Paste Real-Debrid API Key..."
-                    value={debridKey}
+                    placeholder="Paste Premiumize API Key..."
+                    value={premiumizeKey}
                     onChange={(e) => {
-                      setDebridKey(e.target.value);
-                      localStorage.setItem('debrid_api_key', e.target.value);
+                      setPremiumizeKey(e.target.value);
+                      localStorage.setItem('premiumize_api_key', e.target.value);
                     }}
                     className="w-full p-2 bg-black text-white border border-cyan-800 text-sm rounded"
                   />
                 </div>
 
                 <button 
-                  onClick={() => {
-                    verifyDebridKey(debridKey);
-                    setCurrentScreen('guide');
-                  }} 
+                  onClick={() => setCurrentScreen('guide')} 
                   className="bg-lime-500 text-black font-extrabold px-4 py-2 w-full text-base mt-2 hover:bg-lime-400 rounded transition-all"
                 >
-                  Save & Validate Key [BACK]
+                  Save & Exit to Guide [BACK]
                 </button>
               </div>
             </div>
@@ -486,12 +570,24 @@ export default function App() {
         </div>
       )}
 
-      {/* VIDEO PLAYER SCREEN WITH STATUS LOG */}
+      {/* VIDEO PLAYER SCREEN */}
       {currentScreen === 'player' && (
         <div className="relative w-full h-full bg-black flex items-center justify-center">
           {currentEpisodeInfo && (
             <div className="absolute top-4 left-4 z-30 bg-[#001026]/90 border-2 border-cyan-600 px-4 py-2 rounded shadow-2xl text-white font-mono max-w-md">
-              <span className="text-lime-400 font-bold block text-sm">{currentEpisodeInfo.showName}</span>
+              <div className="flex justify-between items-center mb-1">
+                <span className="text-lime-400 font-bold text-sm">{currentEpisodeInfo.showName}</span>
+                <button 
+                  onClick={() => {
+                    setCurrentScreen('guide');
+                    setPlayerASrc('');
+                    setPlayerBSrc('');
+                  }}
+                  className="text-xs bg-red-800 px-2 py-0.5 rounded text-white font-bold ml-2"
+                >
+                  ✕ Close
+                </button>
+              </div>
               <span className="text-xs text-cyan-200 block">
                 Season {currentEpisodeInfo.season} Ep {currentEpisodeInfo.episode}: "{currentEpisodeInfo.title}"
               </span>
