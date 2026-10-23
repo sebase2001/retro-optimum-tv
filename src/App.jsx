@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
 const TMDB_API_KEY = '3fd13673b37363d5107711b6d2b311ad';
-const CORS_PROXY = 'https://corsproxy.io/?url=';
 
 const RETRO_COMMERCIAL_TORRENTS = [
   '8093132bf6e1e8b792ff4a682a201b1a4732d847',
@@ -32,10 +31,9 @@ export default function App() {
   
   const [currentEpisodeInfo, setCurrentEpisodeInfo] = useState(null);
   const [isCommercialActive, setIsCommercialActive] = useState(false);
-  const [debridStatusMsg, setDebridStatusMsg] = useState('');
+  const [statusLog, setStatusLog] = useState('');
 
   // Debrid State
-  const [debridProvider, setDebridProvider] = useState(localStorage.getItem('debrid_provider') || 'realdebrid');
   const [debridKey, setDebridKey] = useState(localStorage.getItem('debrid_api_key') || '');
 
   const videoRefA = useRef(null);
@@ -86,22 +84,23 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleRemoteControl);
   }, [currentScreen, selectedRow]);
 
-  // Test Debrid Key Validity
   const verifyDebridKey = async (key) => {
-    if (!key) return;
+    if (!key) {
+      setStatusLog('No Real-Debrid key entered.');
+      return;
+    }
     try {
-      const targetUrl = encodeURIComponent('https://api.real-debrid.com/rest/1.0/user');
-      const res = await fetch(`${CORS_PROXY}${targetUrl}`, {
+      const res = await fetch('https://api.real-debrid.com/rest/1.0/user', {
         headers: { Authorization: `Bearer ${key}` }
       });
       const data = await res.json();
       if (data.username) {
-        setDebridStatusMsg(`Connected as: ${data.username} (${data.type})`);
+        setStatusLog(`Real-Debrid Connected: ${data.username} (${data.type})`);
       } else {
-        setDebridStatusMsg('Invalid API Key or expired Real-Debrid account!');
+        setStatusLog('Invalid API Key.');
       }
     } catch (e) {
-      setDebridStatusMsg('Network error validating Debrid key.');
+      setStatusLog('Key validation error.');
     }
   };
 
@@ -128,65 +127,76 @@ export default function App() {
     }
   };
 
-  const resolveDebridLink = async (hashOrMagnet) => {
-    if (!debridKey) return null;
+  const resolveDebridStream = async (tmdbId, season, episode) => {
+    if (!debridKey) {
+      setStatusLog('No Debrid Key set. Using sample stream fallback.');
+      return null;
+    }
+
     try {
-      if (debridProvider === 'realdebrid') {
-        const cleanMagnet = hashOrMagnet.startsWith('magnet:') 
-          ? hashOrMagnet 
-          : `magnet:?xt=urn:btih:${hashOrMagnet}`;
+      setStatusLog('Searching Torrentio with Real-Debrid key...');
+      // Formatted Torrentio URL with embedded Real-Debrid API Key
+      const torrentioUrl = `https://torrentio.strem.fun/realdebrid=${debridKey}/stream/series/${tmdbId}:${season}:${episode}.json`;
+      
+      const res = await fetch(torrentioUrl);
+      const data = await res.json();
+
+      if (data.streams && data.streams.length > 0) {
+        // Find cached stream or direct download link returned by Torrentio
+        const stream = data.streams.find((s) => s.url || s.externalUrl) || data.streams[0];
         
-        const addUrl = encodeURIComponent(`https://api.real-debrid.com/rest/1.0/torrents/addMagnet`);
-        const formData = new URLSearchParams();
-        formData.append('magnet', cleanMagnet);
+        if (stream.url) {
+          setStatusLog('Direct Real-Debrid stream found!');
+          return stream.url;
+        }
 
-        const addRes = await fetch(`${CORS_PROXY}${addUrl}`, {
-          method: 'POST',
-          headers: { 
-            Authorization: `Bearer ${debridKey}`,
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: formData.toString(),
-        });
-        const addData = await addRes.json();
+        if (stream.infoHash) {
+          setStatusLog('Adding Magnet to Real-Debrid...');
+          const formData = new URLSearchParams();
+          formData.append('magnet', `magnet:?xt=urn:btih:${stream.infoHash}`);
 
-        if (addData.id) {
-          const infoUrl = encodeURIComponent(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`);
-          const infoRes = await fetch(`${CORS_PROXY}${infoUrl}`, {
-            headers: { Authorization: `Bearer ${debridKey}` },
+          const addRes = await fetch('https://api.real-debrid.com/rest/1.0/torrents/addMagnet', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${debridKey}`,
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: formData.toString()
           });
-          const infoData = await infoRes.json();
+          const addData = await addRes.json();
 
-          if (infoData.links && infoData.links.length > 0) {
-            const randomLink = infoData.links[Math.floor(Math.random() * infoData.links.length)];
-            const unrestrictUrl = encodeURIComponent(`https://api.real-debrid.com/rest/1.0/unrestrict/link`);
-            
-            const unrestrictForm = new URLSearchParams();
-            unrestrictForm.append('link', randomLink);
-
-            const unrestrictRes = await fetch(`${CORS_PROXY}${unrestrictUrl}`, {
-              method: 'POST',
-              headers: { 
-                Authorization: `Bearer ${debridKey}`,
-                'Content-Type': 'application/x-www-form-urlencoded'
-              },
-              body: unrestrictForm.toString(),
+          if (addData.id) {
+            const infoRes = await fetch(`https://api.real-debrid.com/rest/1.0/torrents/info/${addData.id}`, {
+              headers: { Authorization: `Bearer ${debridKey}` }
             });
-            const unrestrictData = await unrestrictRes.json();
-            return unrestrictData.download;
+            const infoData = await infoRes.json();
+
+            if (infoData.links && infoData.links.length > 0) {
+              const unrestrictForm = new URLSearchParams();
+              unrestrictForm.append('link', infoData.links[0]);
+
+              const unrestrictRes = await fetch('https://api.real-debrid.com/rest/1.0/unrestrict/link', {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${debridKey}`,
+                  'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: unrestrictForm.toString()
+              });
+              const unrestrictData = await unrestrictRes.json();
+              if (unrestrictData.download) {
+                setStatusLog('Real-Debrid link unrestricted successfully!');
+                return unrestrictData.download;
+              }
+            }
           }
         }
-      } else if (debridProvider === 'premiumize') {
-        const pmUrl = encodeURIComponent(`https://www.premiumize.me/api/transfer/directdl?apikey=${debridKey}&src=magnet:?xt=urn:btih:${hashOrMagnet}`);
-        const pmRes = await fetch(`${CORS_PROXY}${pmUrl}`);
-        const pmData = await pmRes.json();
-        if (pmData.status === 'success' && pmData.content.length > 0) {
-          const randomFile = pmData.content[Math.floor(Math.random() * pmData.content.length)];
-          return randomFile.link;
-        }
+      } else {
+        setStatusLog('No torrents found on Torrentio for this episode.');
       }
-    } catch (err) {
-      console.error('Debrid stream resolution error:', err);
+    } catch (e) {
+      console.error('Error resolving Debrid stream:', e);
+      setStatusLog('Error connecting to Torrentio / Real-Debrid.');
     }
     return null;
   };
@@ -194,38 +204,27 @@ export default function App() {
   const launchBroadcast = async (channel) => {
     setCurrentScreen('player');
     setIsCommercialActive(true);
+    setStatusLog('Fetching random episode details from TMDB...');
 
     const epInfo = await fetchRandomEpisode(channel.tmdbId);
     setCurrentEpisodeInfo(epInfo);
+    setStatusLog(`Selected: ${epInfo.showName} S${epInfo.season}E${epInfo.episode}`);
 
-    let epStreamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-    try {
-      const torrentioTarget = encodeURIComponent(`https://torrentio.strem.fun/stream/series/${channel.tmdbId}:${epInfo.season}:${epInfo.episode}.json`);
-      const torrentioRes = await fetch(`${CORS_PROXY}${torrentioTarget}`);
-      const torrentioData = await torrentioRes.json();
-      
-      if (torrentioData.streams && torrentioData.streams.length > 0) {
-        const hash = torrentioData.streams[0].infoHash || torrentioData.streams[0].url;
-        const resolvedEp = await resolveDebridLink(hash);
-        if (resolvedEp) epStreamUrl = resolvedEp;
-      }
-    } catch (e) {
-      console.error('Episode resolution fallback', e);
-    }
+    // Resolve episode via Real-Debrid
+    const resolvedEpUrl = await resolveDebridStream(channel.tmdbId, epInfo.season, epInfo.episode);
+    const finalEpStreamUrl = resolvedEpUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
 
-    let commStreamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
-    if (debridKey) {
-      const randomCommHash = RETRO_COMMERCIAL_TORRENTS[Math.floor(Math.random() * RETRO_COMMERCIAL_TORRENTS.length)];
-      const resolvedComm = await resolveDebridLink(randomCommHash);
-      if (resolvedComm) commStreamUrl = resolvedComm;
-    }
+    // Commercial sample feed
+    const commStreamUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4';
 
     setPlayerASrc(commStreamUrl);
-    setPlayerBSrc(epStreamUrl);
+    setPlayerBSrc(finalEpStreamUrl);
     setActivePlayer('A');
 
     setTimeout(() => {
-      if (videoRefA.current) videoRefA.current.play();
+      if (videoRefA.current) {
+        videoRefA.current.play().catch((err) => console.log('Autoplay error:', err));
+      }
     }, 200);
   };
 
@@ -233,7 +232,7 @@ export default function App() {
     setIsCommercialActive(false);
     setActivePlayer('B');
     if (videoRefB.current) {
-      videoRefB.current.play();
+      videoRefB.current.play().catch((err) => console.log('Autoplay error:', err));
     }
   };
 
@@ -242,7 +241,7 @@ export default function App() {
   return (
     <div className="w-screen h-screen bg-black font-sans select-none overflow-hidden flex flex-col text-white">
       
-      {/* ----------------- MOBILE RESPONSIVE LAYOUT (PHONES) ----------------- */}
+      {/* MOBILE LAYOUT */}
       {isMobile ? (
         <div className="flex flex-col h-full bg-[#0a0f1d] overflow-y-auto">
           <div className="flex justify-between items-center bg-[#002855] px-4 py-3 border-b-2 border-cyan-800 sticky top-0 z-20">
@@ -286,26 +285,13 @@ export default function App() {
               <div className="bg-[#001026] p-4 border border-cyan-800 rounded-lg">
                 <h2 className="text-lg font-bold text-lime-400 mb-3">Debrid Setup</h2>
                 
-                {debridStatusMsg && (
-                  <div className="mb-3 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800">
-                    {debridStatusMsg}
+                {statusLog && (
+                  <div className="mb-3 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800 font-mono">
+                    {statusLog}
                   </div>
                 )}
 
-                <label className="block text-xs text-cyan-200 mb-1">Provider:</label>
-                <select
-                  value={debridProvider}
-                  onChange={(e) => {
-                    setDebridProvider(e.target.value);
-                    localStorage.setItem('debrid_provider', e.target.value);
-                  }}
-                  className="w-full p-2 bg-black text-white border border-cyan-800 text-sm rounded mb-3"
-                >
-                  <option value="realdebrid">Real-Debrid</option>
-                  <option value="premiumize">Premiumize.me</option>
-                </select>
-
-                <label className="block text-xs text-cyan-200 mb-1">API Key:</label>
+                <label className="block text-xs text-cyan-200 mb-1">Real-Debrid API Key:</label>
                 <input
                   type="password"
                   placeholder="Paste Real-Debrid Key..."
@@ -331,7 +317,7 @@ export default function App() {
           )}
         </div>
       ) : (
-        /* ----------------- TV i-GUIDE LAYOUT (ANDROID TV BOX) ----------------- */
+        /* TV i-GUIDE LAYOUT */
         <div className="flex flex-col h-full bg-[#0a0f1d] relative border border-gray-800 p-2">
           {currentScreen === 'guide' && (
             <div className="flex flex-col h-full bg-[#0a0f1d] relative">
@@ -465,29 +451,14 @@ export default function App() {
               <div className="bg-[#001026] p-6 border-4 border-cyan-700 rounded w-2/3 shadow-2xl">
                 <h2 className="text-xl font-bold text-lime-400 mb-2 tracking-wider">i-Guide Settings & Debrid Setup</h2>
                 
-                {debridStatusMsg && (
-                  <div className="mb-4 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800">
-                    {debridStatusMsg}
+                {statusLog && (
+                  <div className="mb-4 text-xs bg-cyan-950 text-cyan-200 p-2 rounded border border-cyan-800 font-mono">
+                    {statusLog}
                   </div>
                 )}
 
                 <div className="mb-4">
-                  <label className="block text-xs text-cyan-200 mb-1">Debrid Provider:</label>
-                  <select
-                    value={debridProvider}
-                    onChange={(e) => {
-                      setDebridProvider(e.target.value);
-                      localStorage.setItem('debrid_provider', e.target.value);
-                    }}
-                    className="w-full p-2 bg-black text-white border border-cyan-800 text-sm rounded"
-                  >
-                    <option value="realdebrid">Real-Debrid</option>
-                    <option value="premiumize">Premiumize.me</option>
-                  </select>
-                </div>
-
-                <div className="mb-4">
-                  <label className="block text-xs text-cyan-200 mb-1">API Key:</label>
+                  <label className="block text-xs text-cyan-200 mb-1">Real-Debrid API Key:</label>
                   <input
                     type="password"
                     placeholder="Paste Real-Debrid API Key..."
@@ -515,17 +486,19 @@ export default function App() {
         </div>
       )}
 
-      {/* ----------------- VIDEO PLAYER ----------------- */}
+      {/* VIDEO PLAYER SCREEN WITH STATUS LOG */}
       {currentScreen === 'player' && (
         <div className="relative w-full h-full bg-black flex items-center justify-center">
           {currentEpisodeInfo && (
-            <div className="absolute top-4 left-4 z-30 bg-[#001026] border-2 border-cyan-600 px-4 py-2 rounded shadow-2xl text-white font-mono">
+            <div className="absolute top-4 left-4 z-30 bg-[#001026]/90 border-2 border-cyan-600 px-4 py-2 rounded shadow-2xl text-white font-mono max-w-md">
               <span className="text-lime-400 font-bold block text-sm">{currentEpisodeInfo.showName}</span>
-              <span className="text-xs text-cyan-200">
+              <span className="text-xs text-cyan-200 block">
                 Season {currentEpisodeInfo.season} Ep {currentEpisodeInfo.episode}: "{currentEpisodeInfo.title}"
               </span>
-              {isCommercialActive && (
-                <span className="block text-[11px] text-red-500 font-bold mt-1 animate-pulse">● DEBRID VINTAGE COMMERCIAL BREAK</span>
+              {statusLog && (
+                <span className="text-[11px] text-yellow-300 block mt-1 border-t border-cyan-900 pt-1 font-mono">
+                  {statusLog}
+                </span>
               )}
             </div>
           )}
